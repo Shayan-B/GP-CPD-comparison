@@ -1,14 +1,9 @@
 import gpflow
 from gpflow.logdensities import multivariate_normal
 
-import matplotlib.pyplot as plt
-
 import numpy as np
-import pandas as pd
-import yfinance as yf
 
 import tensorflow as tf
-import tensorflow_probability as tfp
 
 import scipy
 import scipy.stats
