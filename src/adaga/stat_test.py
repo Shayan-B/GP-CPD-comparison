@@ -1,5 +1,4 @@
 import gpflow
-from gpflow.logdensities import multivariate_normal
 
 import numpy as np
 

@@ -8,7 +8,7 @@ import gpflow
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from gpflow.kernels import ChangePoints, Matern32
+from gpflow.kernels import ChangePoints
 from sklearn.preprocessing import StandardScaler
 from tensorflow_probability import bijectors as tfb
 from tqdm import tqdm
@@ -91,13 +91,13 @@ def select_main_kernel(
         kernel_2 = gpflow.kernels.Matern52(
             variance=variance_2, lengthscales=lengthscale_2
         )
-        total_kernel = gpflow.kernels.Sum([kernel_1, kernel_2])
+        final_kernel = gpflow.kernels.Sum([kernel_1, kernel_2])
     else:
-        total_kernel = gpflow.kernels.Matern32(
+        final_kernel = gpflow.kernels.Matern32(
             variance=variance_1, lengthscales=lengthscale_1
         )
 
-    return total_kernel
+    return final_kernel
 
 
 def fit_matern_kernel(
@@ -117,7 +117,10 @@ def fit_matern_kernel(
     Returns:
         Tuple[float, Dict[str, float]]: negative log marginal likelihood and paramters after fitting the GP
     """
+    # If we should use the sum of kernels
     use_sum = True
+
+    # Make the model using the kernel and data
     m = gpflow.models.GPR(
         data=(
             time_series_data.loc[:, ["X"]].to_numpy(),
@@ -132,10 +135,16 @@ def fit_matern_kernel(
         ),
         noise_variance=likelihood_variance,
     )
+
+    # Define the Optimizer for the model
     opt = gpflow.optimizers.Scipy()
+
+    # Optimize and get the optimized loss value
     nlml = opt.minimize(
         m.training_loss, m.trainable_variables, options=dict(maxiter=MAX_ITERATIONS)
     ).fun
+
+    # Define the parameters based on the fact that we need the kernels' sum
     if use_sum:
         param_catcher = m.kernel.kernels
     else:
@@ -176,47 +185,55 @@ def fit_changepoint_kernel(
     Returns:
         Tuple[float, float, Dict[str, float]]: changepoint location, negative log marginal likelihood and paramters after fitting the GP
     """
+    # If we should use the sum of kernels
     use_sum = True
 
+    # If we don't have the location of changepoint consider the half of the window value
     if not kC_changepoint_location:
         kC_changepoint_location = (
             time_series_data["X"].iloc[0] + time_series_data["X"].iloc[-1]
         ) / 2.0
 
+    # Define the needed kernels
+    kernel_1 = select_main_kernel(
+        variance_1=k1_variance,
+        lengthscale_1=k1_lengthscale,
+        variance_2=k1_variance,
+        lengthscale_2=k1_lengthscale,
+        use_sum=use_sum,
+    )
+    kernel_2 = select_main_kernel(
+        variance_1=k2_variance,
+        lengthscale_1=k2_lengthscale,
+        variance_2=k2_variance,
+        lengthscale_2=k2_lengthscale,
+        use_sum=use_sum,
+    )
+
+    # Build the model based on Changepoint kernel
     m = gpflow.models.GPR(
         data=(
             time_series_data.loc[:, ["X"]].to_numpy(),
             time_series_data.loc[:, ["Y"]].to_numpy(),
         ),
         kernel=ChangePointsWithBounds(
-            [
-                # Matern32(variance=k1_variance, lengthscales=k1_lengthscale),
-                # Matern32(variance=k2_variance, lengthscales=k2_lengthscale),
-                select_main_kernel(
-                    variance_1=k1_variance,
-                    lengthscale_1=k1_lengthscale,
-                    variance_2=k1_variance,
-                    lengthscale_2=k1_lengthscale,
-                    use_sum=use_sum,
-                ),
-                select_main_kernel(
-                    variance_1=k2_variance,
-                    lengthscale_1=k2_lengthscale,
-                    variance_2=k2_variance,
-                    lengthscale_2=k2_lengthscale,
-                    use_sum=use_sum,
-                ),
-            ],
+            kernels=[kernel_1, kernel_2],
             location=kC_changepoint_location,
             interval=(time_series_data["X"].iloc[0], time_series_data["X"].iloc[-1]),
             steepness=kC_steepness,
         ),
     )
     m.likelihood.variance.assign(kC_likelihood_variance)
+
+    # Define the Optimizer
     opt = gpflow.optimizers.Scipy()
+
+    # Optimize and get the optimized loss value
     nlml = opt.minimize(
         m.training_loss, m.trainable_variables, options=dict(maxiter=200)
     ).fun
+
+    #
     if use_sum:
         param_catcher_1 = [kernel for kernel in m.kernel.kernels[0].kernels]
         param_catcher_2 = [kernel for kernel in m.kernel.kernels[1].kernels]
@@ -370,6 +387,7 @@ def changepoint_loc_and_score(
             kC_params,
         ) = fit_changepoint_kernel(time_series_data)
 
+    # Calculate the score based on the window
     cp_score = changepoint_severity(kC_nlml, kM_nlml)
     cp_loc_normalised = (time_series_data["X"].iloc[-1] - changepoint_location) / (
         time_series_data["X"].iloc[-1] - time_series_data["X"].iloc[0]
@@ -422,44 +440,67 @@ def run_module(
             first_window = first_window.iloc[1:]
         time_series_data = pd.concat([first_window, remaining_data]).copy()
 
-    csv_fields = ["date", "t", "cp_location", "cp_location_norm", "cp_score"]
+    # Get the .csv file ready for data
+    points_data_fields = ["date", "t", "cp_location", "cp_location_norm", "cp_score"]
     with open(output_csv_file_path, "w") as f:
         writer = csv.writer(f)
-        writer.writerow(csv_fields)
+        writer.writerow(points_data_fields)
 
     time_series_data["date"] = time_series_data.index
     time_series_data = time_series_data.reset_index(drop=True)
-    for window_end in tqdm(range(lookback_window_length + 1, len(time_series_data))):
-        ts_data_window = time_series_data.iloc[
-            window_end - (lookback_window_length + 1) : window_end
-        ][["date", "daily_returns"]].copy()
-        ts_data_window["X"] = ts_data_window.index.astype(float)
-        ts_data_window = ts_data_window.rename(columns={"daily_returns": "Y"})
-        time_index = window_end - 1
-        window_date = ts_data_window["date"].iloc[-1].strftime("%Y-%m-%d")
 
-        try:
-            if use_kM_hyp_to_initialise_kC:
-                cp_score, cp_loc, cp_loc_normalised, _, _ = changepoint_loc_and_score(
-                    ts_data_window
-                )
-            else:
-                cp_score, cp_loc, cp_loc_normalised, _, _ = changepoint_loc_and_score(
-                    ts_data_window,
-                    k1_lengthscale=1.0,
-                    k1_variance=1.0,
-                    k2_lengthscale=1.0,
-                    k2_variance=1.0,
-                    kC_likelihood_variance=1.0,
-                )
+    # A list to contains all the calculated CP data
+    cp_points = []
 
-        except SyntaxError:
-            # write as NA when fails and will deal with this later
-            cp_score, cp_loc, cp_loc_normalised = "NA", "NA", "NA"
+    # Open the file once at the beginning of the for loop and write to it with each iteration
+    with open(output_csv_file_path, "a") as f:
+        writer = csv.writer(f)
+        # Main window Calculation
+        for window_end in tqdm(
+            range(lookback_window_length + 1, len(time_series_data))
+        ):
+            # Seperate the data for each window
+            # We seperate the data based on the window_end_point and LBW
+            ts_data_window = time_series_data.iloc[
+                window_end - (lookback_window_length + 1) : window_end
+            ][["date", "daily_returns"]].copy()
 
-        # #write the reults to the csv
-        with open(output_csv_file_path, "a") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                [window_date, time_index, cp_loc, cp_loc_normalised, cp_score]
-            )
+            # Define the X and Y columns
+            ts_data_window["X"] = ts_data_window.index.astype(float)
+            ts_data_window = ts_data_window.rename(columns={"daily_returns": "Y"})
+            time_index = window_end - 1
+            window_date = ts_data_window["date"].iloc[-1].strftime("%Y-%m-%d")
+
+            # Main part for computing the location and score of changepoints
+            try:
+                if use_kM_hyp_to_initialise_kC:
+                    cp_score, cp_loc, cp_loc_normalised, _, _ = (
+                        changepoint_loc_and_score(ts_data_window)
+                    )
+                else:
+                    cp_score, cp_loc, cp_loc_normalised, _, _ = (
+                        changepoint_loc_and_score(
+                            ts_data_window,
+                            k1_lengthscale=1.0,
+                            k1_variance=1.0,
+                            k2_lengthscale=1.0,
+                            k2_variance=1.0,
+                            kC_likelihood_variance=1.0,
+                        )
+                    )
+
+            except SyntaxError:
+                # write as NA when fails and will deal with this later
+                cp_score, cp_loc, cp_loc_normalised = "NA", "NA", "NA"
+
+            # Define the data to keep
+            points_data = [window_date, time_index, cp_loc, cp_loc_normalised, cp_score]
+            cp_points.append(points_data)
+
+            # Write the reults to the csv
+            writer.writerow(points_data)
+
+    cpd_df = pd.concat(cp_points)
+    cpd_df.columns = points_data_fields
+
+    return cpd_df
