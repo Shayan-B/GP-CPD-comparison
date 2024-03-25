@@ -10,7 +10,7 @@ import logging
 
 import gc
 
-from stat_test import StatisticalTest
+from src.adaga.stat_test import StatisticalTest
 
 
 class AdaptiveRegionalization(object):

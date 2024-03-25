@@ -1,13 +1,12 @@
-from adaga import inducing_points
-
-import matplotlib.pyplot as plt
+import logging
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import tensorflow as tf
+import matplotlib.pyplot as plt
 
-import logging
+from src.adaga import inducing_points
 
 # Set TensorFlow logging level to suppress warnings
 tf.get_logger().setLevel(logging.ERROR)
@@ -55,6 +54,7 @@ def plot_data(plot_data: pd.DataFrame, change_points: list, ticker_name: str):
     plt.show()
     return
 
+
 def run_module():
     ticker, use_net = "GOOG", True
 
@@ -90,6 +90,8 @@ def run_module():
         pass
 
     # Extract detected change points
-    change_points = [window["window_start"] for window in regionalization.closed_windows]
+    change_points = [
+        window["window_start"] for window in regionalization.closed_windows
+    ]
 
     plot_data(func_data[0], change_points, ticker)

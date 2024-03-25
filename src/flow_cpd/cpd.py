@@ -493,12 +493,12 @@ def run_module(
 
             # Define the data to keep
             points_data = [window_date, time_index, cp_loc, cp_loc_normalised, cp_score]
-            cp_points.append(points_data)
+            cp_points.append(pd.Series(points_data))
 
             # Write the reults to the csv
             writer.writerow(points_data)
 
-    cpd_df = pd.concat(cp_points)
+    cpd_df = pd.concat(cp_points, axis=1).T
     cpd_df.columns = points_data_fields
 
     return cpd_df

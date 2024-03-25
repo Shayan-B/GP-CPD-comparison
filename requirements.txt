@@ -1,7 +1,3 @@
-tensorflow==2.16.1
 gpflow==2.9.0
-numpy==1.26.4
-pandas==2.2.1
-scipy==1.12.0
 matplotlib==3.8.3
 yfinance==0.2.37
