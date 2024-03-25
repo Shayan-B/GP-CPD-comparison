@@ -1,4 +1,4 @@
-from libs.adaga import inducing_points
+from adaga import inducing_points
 
 import matplotlib.pyplot as plt
 

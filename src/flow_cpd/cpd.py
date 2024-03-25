@@ -2,8 +2,6 @@ import csv
 import datetime as dt
 from typing import Dict, List, Optional, Tuple, Union
 
-import yfinance as yf
-
 import gpflow
 import numpy as np
 import pandas as pd
