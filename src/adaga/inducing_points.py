@@ -144,7 +144,7 @@ class AdaptiveRegionalization(object):
         # Standardize
         x = (x - x_mean) / x_std
         y = (y - y_mean) / y_std
-        return x, y
+        return x, y, x_mean, x_std, y_mean, y_std
 
     def creat_expert(
         self, window, new: bool, x_mean=None, x_std=None, y_mean=None, y_std=None
@@ -159,7 +159,9 @@ class AdaptiveRegionalization(object):
         :param y_std: the std dev to use in observations' standardization;
         :return: the expert, together with the (potentially recomputed) time and observations' mean, atd dev.
         """
-        x, y = self.make_observation_params(window, new, x_mean, x_std, y_mean, y_std)
+        x, y, x_mean, x_std, y_mean, y_std = self.make_observation_params(
+            window, new, x_mean, x_std, y_mean, y_std
+        )
 
         # Choose sum inducing points
         z_init = np.random.choice(
@@ -324,13 +326,12 @@ class AdaptiveRegionalization(object):
             tf.keras.backend.clear_session()
 
             tf.random.set_seed(self.seed)
-            
+
             # Define windows in tuples of (x,y)
             window = np.array(
                 [e for e in np.column_stack((self.x, self.y)) if start <= e[0] < end]
             )
             print("start, end:", start, end)
-            # print("WINDOW SHAPE", window.shape)
 
             if window.shape[0] <= 1:
                 break
@@ -338,7 +339,9 @@ class AdaptiveRegionalization(object):
             best_start_new_exp = end - self.min_window_size
 
             # Choose the tuples for the expert training
-            window_current_expert = np.array([win for win in window if start <= win[0] < end])
+            window_current_expert = np.array(
+                [win for win in window if start <= win[0] < end]
+            )
 
             # Make the model for the current window
             model_current_expert, x_mean, x_std, y_mean, y_std = self.creat_expert(
@@ -355,7 +358,7 @@ class AdaptiveRegionalization(object):
             ):
                 # Define the new window based on the minimum window size
                 window_new_expert = np.array(
-                    [e for e in window if best_start_new_exp <= e[0] < end]
+                    [win for win in window if best_start_new_exp <= win[0] < end]
                 )
 
                 # Define the new expert
@@ -370,7 +373,7 @@ class AdaptiveRegionalization(object):
                 # print("CURRENT MODEL", model_current_expert.as_pandas_table())
 
                 # print("NEW MODEL", model_new_expert.as_pandas_table())
-                
+
                 # Make the statistical test object and apply the statistics test
                 statistical_test = StatisticalTest(
                     model_current_expert, model_new_expert, self.delta
