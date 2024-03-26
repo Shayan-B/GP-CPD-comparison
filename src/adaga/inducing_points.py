@@ -8,8 +8,6 @@ import tensorflow_probability as tfp
 
 import logging
 
-import gc
-
 from src.adaga.stat_test import StatisticalTest
 
 
@@ -107,15 +105,11 @@ class AdaptiveRegionalization(object):
                 base.variance = gpflow.Parameter(
                     value=1.0, transform=variance_transform, name="Base_Variance"
                 )
-            # else:
-            #     base.variance = 1.0
 
             k = gpflow.kernels.Periodic(base_kernel=base)
 
         elif self.kern == "Linear":
             k = gpflow.kernels.Linear()
-
-        # k.variance = 1.0
 
         if not new and self.kern != "Periodic":
             variance_transform = self.make_logistic_boundary(
@@ -126,8 +120,8 @@ class AdaptiveRegionalization(object):
                 transform=variance_transform,
             )
 
-        # Add Mater52 Kernel to the selected kernel if we want to have an addition
-        # To our kernel
+        # Add Mater52 Kernel to the selected kernel if we want to use the summation
+        # Of kernels
         if use_kernel_sum:
             k = gpflow.kernels.Sum(
                 [k, gpflow.kernels.Matern52(lengthscales=kernel_lengthscale)]
@@ -135,7 +129,24 @@ class AdaptiveRegionalization(object):
 
         return k
 
-    def _create_expert(
+    def make_observation_params(
+        self, window, new: bool, x_mean=None, x_std=None, y_mean=None, y_std=None
+    ):
+        # Define x and y
+        x = np.expand_dims(window[:, 0], axis=-1)
+        y = np.expand_dims(window[:, 1], axis=-1)
+        if not new:
+            x_mean = np.mean(x)
+            x_std = np.std(x)
+            y_mean = np.mean(y)
+            y_std = np.std(y)
+
+        # Standardize
+        x = (x - x_mean) / x_std
+        y = (y - y_mean) / y_std
+        return x, y
+
+    def creat_expert(
         self, window, new: bool, x_mean=None, x_std=None, y_mean=None, y_std=None
     ):
         """
@@ -148,38 +159,18 @@ class AdaptiveRegionalization(object):
         :param y_std: the std dev to use in observations' standardization;
         :return: the expert, together with the (potentially recomputed) time and observations' mean, atd dev.
         """
-        x = np.expand_dims(window[:, 0], axis=-1)
-        y = np.expand_dims(window[:, 1], axis=-1)
-        if not new:
-            x_mean = np.mean(x)
-            x_std = np.std(x)
-            y_mean = np.mean(y)
-            y_std = np.std(y)
-        x -= x_mean
-        x /= x_std
-        y -= y_mean
-        y /= y_std
+        x, y = self.make_observation_params(window, new, x_mean, x_std, y_mean, y_std)
+
+        # Choose sum inducing points
         z_init = np.random.choice(
             x[:, 0], min(self.num_inducing_points, x.shape[0]), replace=False
         )
         z_init = np.expand_dims(z_init, axis=-1)
 
+        # Determine our kernel
         kernel = self.select_kernel(new=new, use_kernel_sum=True)
 
-        # variance_trainable = True
-        # kernel_variance = gpflow.Parameter(value=1.0, transform=variance_transform, name="Kernel_variance")
-        # else:
-        #     variance_transform = None
-        #     variance_trainable = False
-        # kernel_variance = None
-
-        # k.variance = gpflow.Parameter(
-        #     value=1.0,
-        #     transform=variance_transform,
-        # name="Kernel_variance",
-        # trainable=variance_trainable
-        # )
-
+        # Define the Main model
         expert = gpflow.models.SGPR(
             data=(x, y), kernel=kernel, inducing_variable=z_init
         )
@@ -285,7 +276,7 @@ class AdaptiveRegionalization(object):
             )
 
             model_test, x_mean_test, x_std_test, y_mean_test, y_std_test = (
-                self._create_expert(window_test, False)
+                self.creat_expert(window_test, False)
             )
             opt_test = gpflow.train.ScipyOptimizer()
             opt_test.minimize(model_test)
@@ -307,6 +298,7 @@ class AdaptiveRegionalization(object):
         ]
 
     def optimize_model(self, model):
+        """Optimize the given model for minimum loss."""
         expert_optimizer = gpflow.optimizers.Scipy()
         expert_optimizer.minimize(
             closure=model.training_loss,
@@ -318,18 +310,22 @@ class AdaptiveRegionalization(object):
         return model
 
     def regionalize(self) -> None:
-        """
-        This method applies ADAGA streaming GP regression.
-        """
+        """Apply ADAGA streaming GP regression"""
         start = self.x[0, 0]
-        end = start + 2 * self.min_window_size  # + self.batch_time_jump
+
+        # Choose the end point based on 2X the minimum window size
+        end = start + 2 * self.min_window_size
         close_current_window = False
         new_window = True
+
+        # Main loop for CP calculations
         while True:
+            # Clean unused variables in memory_this is mainly for memory optimization
             tf.keras.backend.clear_session()
-            gc.collect()
 
             tf.random.set_seed(self.seed)
+            
+            # Define windows in tuples of (x,y)
             window = np.array(
                 [e for e in np.column_stack((self.x, self.y)) if start <= e[0] < end]
             )
@@ -341,11 +337,15 @@ class AdaptiveRegionalization(object):
 
             best_start_new_exp = end - self.min_window_size
 
-            window_current_expert = np.array([e for e in window if start <= e[0] < end])
-            model_current_expert, x_mean, x_std, y_mean, y_std = self._create_expert(
+            # Choose the tuples for the expert training
+            window_current_expert = np.array([win for win in window if start <= win[0] < end])
+
+            # Make the model for the current window
+            model_current_expert, x_mean, x_std, y_mean, y_std = self.creat_expert(
                 window_current_expert, False
             )
 
+            # train the model for the minimum loss for this window
             model_current_expert = self.optimize_model(model=model_current_expert)
 
             if (
@@ -353,24 +353,31 @@ class AdaptiveRegionalization(object):
                 > self.min_window_size + 3
                 > end - self.x[-1, 0]
             ):
+                # Define the new window based on the minimum window size
                 window_new_expert = np.array(
                     [e for e in window if best_start_new_exp <= e[0] < end]
                 )
-                model_new_expert, _, _, _, _ = self._create_expert(
+
+                # Define the new expert
+                model_new_expert, _, _, _, _ = self.creat_expert(
                     window_new_expert, True, x_mean, x_std, y_mean, y_std
                 )
                 model_current_expert.data = model_new_expert.data
 
+                # Optimize the new model
                 model_new_expert = self.optimize_model(model_new_expert)
 
                 # print("CURRENT MODEL", model_current_expert.as_pandas_table())
 
                 # print("NEW MODEL", model_new_expert.as_pandas_table())
+                
+                # Make the statistical test object and apply the statistics test
                 statistical_test = StatisticalTest(
                     model_current_expert, model_new_expert, self.delta
                 )
                 bad_current_window = statistical_test.test()
 
+                # See if the current window is ruined
                 if bad_current_window:
                     close_current_window = True
 

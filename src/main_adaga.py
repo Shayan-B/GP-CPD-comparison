@@ -13,6 +13,7 @@ tf.get_logger().setLevel(logging.ERROR)
 
 
 def get_data(use_internet: bool = True, ticker: str = None):
+    """Get the data needed for the module to run."""
     tse_file_path = "/content/drive/MyDrive/Colab Notebooks/TSE/price_panel.parquet"
     if use_internet:
         # ticker = ticker  # Replace with your desired stock ticker symbol
@@ -31,6 +32,7 @@ def get_data(use_internet: bool = True, ticker: str = None):
 
 
 def plot_data(plot_data: pd.DataFrame, change_points: list, ticker_name: str):
+    """Plot the data output data."""
     # Plot stock price data with change points
     fig, ax = plt.subplots(figsize=(15, 7))
     ax.plot(plot_data.index, plot_data.values)
@@ -58,15 +60,17 @@ def plot_data(plot_data: pd.DataFrame, change_points: list, ticker_name: str):
 def run_module():
     ticker, use_net = "GOOG", True
 
-    func_data = get_data(use_internet=use_net, ticker=ticker)
-    input_data = func_data[0]
+    original_data = get_data(use_internet=use_net, ticker=ticker)
+
+    # Use the adjusted close data as inputs to the algorithm.
+    input_data = original_data[0]
 
     # Set hyperparameters (adjust as needed)
     regionalization_delta = 0.9
     regionalization_min_w_size = 3
     regionalization_n_ind_pts = 4
     regionalization_kern = (
-        "Matern12"  # Choose a kernel function (e.g., "RBF", "Matern52", etc.)
+        "Matern32"  # Choose a kernel function (e.g., "RBF", "Matern52", etc.)
     )
     regionalization_batch_size = 1
 
@@ -85,8 +89,7 @@ def run_module():
     try:
         # Perform regionalization
         regionalization.regionalize()
-    except ValueError as e:
-        print(e)
+    except ValueError:
         pass
 
     # Extract detected change points
@@ -94,4 +97,4 @@ def run_module():
         window["window_start"] for window in regionalization.closed_windows
     ]
 
-    plot_data(func_data[0], change_points, ticker)
+    plot_data(original_data[0], change_points, ticker)

@@ -26,7 +26,7 @@ def run_module(lbw: int = 10) -> pd.DataFrame:
         A DataFrame containing the ["date", "t", "cp_location", "cp_location_norm", "cp_score"]
         as columns.
     """
-    price_data = get_data_yfinance("GOOG", "2022-09-01", "2024-03-15")
+    price_data = get_data_yfinance("GOOG", "2023-07-01", "2024-03-15")
     price_data.loc[:, "daily_returns"] = price_data["Close"].pct_change()
 
     change_points_df = cpd.run_module(

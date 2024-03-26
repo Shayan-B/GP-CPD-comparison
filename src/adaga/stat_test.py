@@ -234,7 +234,6 @@ class StatisticalTest(object):
         product_covariance_matrix_alt = self._compute_cov_alt(
             self.model_current_expert, self.model_new_expert
         )
-        # print("Product:", product_covariance_matrix_null)
 
         threshold_null = self._compute_thresholds(
             product_covariance_matrix_null,
