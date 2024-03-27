@@ -1,5 +1,7 @@
 import gpflow
-from gpflow.logdensities import multivariate_normal
+import os
+
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 import numpy as np
 
@@ -214,7 +216,9 @@ class AdaptiveRegionalization(object):
         return expert, x_mean, x_std, y_mean, y_std
 
     def compute_covariance(
-        self, model_1: gpflow.models.GPModel = None, model_2: gpflow.models.GPModel = None
+        self,
+        model_1: gpflow.models.GPModel = None,
+        model_2: gpflow.models.GPModel = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Compute the covariances of the given models."""
         K_1, K_2 = None, None
@@ -249,14 +253,14 @@ class AdaptiveRegionalization(object):
 
         return K_1, K_2
 
-    def optimize_model(self, model: gpflow.models.GPModel):
+    def optimize_model(
+        self, model: gpflow.models.GPModel, optimizer: gpflow.optimizers.Scipy
+    ):
         """Optimize the given model for minimum loss."""
-        expert_optimizer = gpflow.optimizers.Scipy()
-        expert_optimizer.minimize(
+        optimizer.minimize(
             closure=model.training_loss,
             variables=model.trainable_variables,
-            compile=True,
-            tf_fun_args=dict(jit_compile=True),
+            compile=False,
         )
 
         return model
@@ -270,13 +274,12 @@ class AdaptiveRegionalization(object):
         close_current_window = False
         new_window = True
 
+        statistical_test = StatisticalTest(self.delta)
+        expert_optimizer = gpflow.optimizers.Scipy(compile_cache_size=0)
+        tf.random.set_seed(self.seed)
+
         # Main loop for CP calculations
         while True:
-            # Clean unused variables in memory_this is mainly for memory optimization
-            tf.keras.backend.clear_session()
-
-            tf.random.set_seed(self.seed)
-
             # Define windows in tuples of (x,y)
             window = np.array(
                 [
@@ -289,7 +292,7 @@ class AdaptiveRegionalization(object):
 
             if window.shape[0] <= 1:
                 break
-            
+
             # Define the comparison window starting point
             best_start_new_exp = end - self.min_window_size
 
@@ -304,7 +307,9 @@ class AdaptiveRegionalization(object):
             )
 
             # train the model for the minimum loss for this window
-            model_current_expert = self.optimize_model(model=model_current_expert)
+            model_current_expert = self.optimize_model(
+                model=model_current_expert, optimizer=expert_optimizer
+            )
 
             if (
                 min(end, self.x[-1, 0]) - start
@@ -323,17 +328,18 @@ class AdaptiveRegionalization(object):
                 model_current_expert.data = model_new_expert.data
 
                 # Optimize the new model
-                model_new_expert = self.optimize_model(model_new_expert)
+                model_new_expert = self.optimize_model(
+                    model=model_new_expert, optimizer=expert_optimizer
+                )
 
                 # print("CURRENT MODEL", model_current_expert.as_pandas_table())
 
                 # print("NEW MODEL", model_new_expert.as_pandas_table())
 
                 # Make the statistical test object and apply the statistics test
-                statistical_test = StatisticalTest(
-                    model_current_expert, model_new_expert, self.delta
+                bad_current_window = statistical_test.test(
+                    model_current_expert, model_new_expert
                 )
-                bad_current_window = statistical_test.test()
 
                 # See if the current window is ruined
                 if bad_current_window:
@@ -366,7 +372,10 @@ class AdaptiveRegionalization(object):
                 end += self.batch_time_jump
 
             close_current_window = False
+
         print(
             "PARTITIONING CREATED:",
             [(e["window_start"], e["window_end"]) for e in self.closed_windows],
         )
+
+        return

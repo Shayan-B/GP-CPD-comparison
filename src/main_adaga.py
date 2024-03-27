@@ -3,13 +3,13 @@ import logging
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import tensorflow as tf
+from tensorflow import get_logger
 import matplotlib.pyplot as plt
 
 from src.adaga import inducing_points
 
 # Set TensorFlow logging level to suppress warnings
-tf.get_logger().setLevel(logging.ERROR)
+get_logger().setLevel(logging.ERROR)
 
 
 def get_data(use_internet: bool = True, ticker: str = None):
@@ -97,3 +97,5 @@ def run_module(ticker: str = "GOOG", use_net: bool = True):
     ]
 
     plot_data(original_data[0], change_points, ticker)
+
+    return
