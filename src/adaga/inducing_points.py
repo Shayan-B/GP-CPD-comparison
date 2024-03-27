@@ -61,7 +61,7 @@ class AdaptiveRegionalization(object):
 
     def make_logistic_boundary(
         self, low_bound: float, high_bound: float
-    ) -> tfp.Bijectors:
+    ) -> tfp.bijectors.Bijector:
         """Make the boundaries for the transforms of kernels.
 
         Args:
@@ -91,6 +91,7 @@ class AdaptiveRegionalization(object):
         self.y = np.expand_dims(sliced_x_y[:, 1], axis=-1)
 
     def select_kernel(self, new: bool, use_kernel_sum: bool = True):
+        """Produce the kernel instance."""
         kernel_lengthscale = gpflow.Parameter(
             value=1,
             transform=self.make_logistic_boundary(1e-3, 100),
@@ -175,7 +176,7 @@ class AdaptiveRegionalization(object):
         x_std: float = None,
         y_mean: float = None,
         y_std: float = None,
-    ) -> tuple[gpflow.models, float, float, float, float]:
+    ) -> tuple[gpflow.models.GPModel, float, float, float, float]:
         """
             This method creates an expert on the region of interest.
 
@@ -213,7 +214,7 @@ class AdaptiveRegionalization(object):
         return expert, x_mean, x_std, y_mean, y_std
 
     def compute_covariance(
-        self, model_1: gpflow.models = None, model_2: gpflow.models = None
+        self, model_1: gpflow.models.GPModel = None, model_2: gpflow.models.GPModel = None
     ) -> tuple[np.ndarray, np.ndarray]:
         """Compute the covariances of the given models."""
         K_1, K_2 = None, None
@@ -248,7 +249,7 @@ class AdaptiveRegionalization(object):
 
         return K_1, K_2
 
-    def optimize_model(self, model):
+    def optimize_model(self, model: gpflow.models.GPModel):
         """Optimize the given model for minimum loss."""
         expert_optimizer = gpflow.optimizers.Scipy()
         expert_optimizer.minimize(

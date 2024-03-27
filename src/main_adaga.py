@@ -57,9 +57,8 @@ def plot_data(plot_data: pd.DataFrame, change_points: list, ticker_name: str):
     return
 
 
-def run_module():
-    ticker, use_net = "GOOG", True
-
+def run_module(ticker: str = "GOOG", use_net: bool = True):
+    """Run the ADAGA algorithm."""
     original_data = get_data(use_internet=use_net, ticker=ticker)
 
     # Use the adjusted close data as inputs to the algorithm.

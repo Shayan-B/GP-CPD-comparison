@@ -1,7 +1,6 @@
 import gpflow
 
 import numpy as np
-
 import tensorflow as tf
 
 import scipy
@@ -15,7 +14,12 @@ class StatisticalTest(object):
     Class that implements the statistical test, used for detecting window degeneracy.
     """
 
-    def __init__(self, model_current_expert, model_new_expert, delta: float):
+    def __init__(
+        self,
+        model_current_expert: gpflow.models.GPModel,
+        model_new_expert: gpflow.models.GPModel,
+        delta: float,
+    ):
         """
         Args:
             model_current_expert (object): The model trained on the whole window.
@@ -27,7 +31,9 @@ class StatisticalTest(object):
         self.model_new_expert = model_new_expert
         self.delta = delta
 
-    def compute_covariance(self, model_0, model_1) -> tuple:
+    def compute_covariance(
+        self, model_0: gpflow.models.GPModel, model_1: gpflow.models.GPModel
+    ) -> tuple:
         """Computes the covariance matrices for two given Gaussian process models.
 
         Args:
@@ -55,7 +61,9 @@ class StatisticalTest(object):
 
         return k_uf, k_uu, h_uf, h_uu
 
-    def compute_alternative_cov(self, model_0, model_1) -> tf.Tensor:
+    def compute_alternative_cov(
+        self, model_0: gpflow.models.GPModel, model_1: gpflow.models.GPModel
+    ) -> tf.Tensor:
         """Computes the covariance matrix under the alternative hypothesis.
 
         Args:
@@ -100,7 +108,9 @@ class StatisticalTest(object):
 
         return result
 
-    def _compute_single_expert_inv_covariance(self, model: gpflow.models.GPModel) -> tf.Tensor:
+    def _compute_single_expert_inv_covariance(
+        self, model: gpflow.models.GPModel
+    ) -> tf.Tensor:
         """Computes the inverse covariance matrix for a given GP model.
 
         Args:
@@ -133,7 +143,9 @@ class StatisticalTest(object):
 
         return tf.subtract(identity, matrix)
 
-    def _compute_single_expert_covariance(self, model) -> tf.Tensor:
+    def _compute_single_expert_covariance(
+        self, model: gpflow.models.GPModel
+    ) -> tf.Tensor:
         """
         Computes the covariance matrix for a given GP model.
         :param model: the model whose covariance matrix is to be computed;
@@ -155,7 +167,9 @@ class StatisticalTest(object):
 
         return tf.add(identity, matrix)
 
-    def compute_ratio(self, inverse_cov_new_exp, vector) -> tf.Tensor:
+    def compute_ratio(
+        self, inverse_cov_new_exp: tf.Tensor, vector: np.ndarray
+    ) -> tf.Tensor:
         """
         Computes the test statistic.
         :param inverse_cov_new_exp: the inverse covariance matrix of the expert trained on the overlap;
@@ -168,7 +182,12 @@ class StatisticalTest(object):
         return likelihood
 
     def compute_thresholds(
-        self, cov_null, cov_alt, cov_new_exp, inverse_cov_new_exp, alt=False
+        self,
+        cov_null: tf.Tensor,
+        cov_alt: tf.Tensor,
+        cov_new_exp: tf.Tensor,
+        inverse_cov_new_exp: tf.Tensor,
+        alt=False,
     ) -> float:
         """
         Computes the threshold for controlling type I and type II errors.
@@ -252,7 +271,9 @@ class StatisticalTest(object):
     def test(self):
         """
         Method that tests if the current window is spoiled or not.
-        :return: the result of the test (boolean).
+
+        Returns:
+            bool: The result of the test.
         """
         product_covariance_matrix_null = self._compute_single_expert_covariance(
             self.model_current_expert
@@ -279,9 +300,9 @@ class StatisticalTest(object):
         )
         ratio = self.compute_ratio(inv_new_cov, self.model_new_expert.data[1])
 
-        print("Threshold for type I errors:", threshold_null.numpy())
-        print("Threshold for type II errors:", threshold_alt.numpy())
-        print("Ratio:", ratio.numpy())
+        # print("Threshold for type I errors:", threshold_null.numpy())
+        # print("Threshold for type II errors:", threshold_alt.numpy())
+        # print("Ratio:", ratio.numpy())
 
         result = threshold_alt >= threshold_null and ratio >= threshold_null
 

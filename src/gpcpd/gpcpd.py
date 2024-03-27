@@ -455,7 +455,8 @@ def run_module(
         writer = csv.writer(f)
         # Main window Calculation
         for window_end in tqdm(
-            range(lookback_window_length + 1, len(time_series_data))
+            range(lookback_window_length + 1, len(time_series_data)),
+            desc="Progress running the GPCPD",
         ):
             # Seperate the data for each window
             # We seperate the data based on the window_end_point and LBW
