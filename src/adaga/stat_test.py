@@ -15,18 +15,32 @@ class StatisticalTest(object):
     Class that implements the statistical test, used for detecting window degeneracy.
     """
 
-    def __init__(self, model_current_expert, model_new_expert, delta):
+    def __init__(self, model_current_expert, model_new_expert, delta: float):
         """
-        Constructor.
-        :param model_current_expert: the model trained on the whole window;
-        :param model_new_expert: the model trained on the overlap;
-        :param delta: the delta value to use in the thresholds.
+        Args:
+            model_current_expert (object): The model trained on the whole window.
+            model_new_expert (object): The model trained on the overlap.
+            delta (float): The delta value to use in the thresholds.
+
         """
         self.model_current_expert = model_current_expert
         self.model_new_expert = model_new_expert
         self.delta = delta
 
-    def compute_covariance(self, model_0, model_1):
+    def compute_covariance(self, model_0, model_1) -> tuple:
+        """Computes the covariance matrices for two given Gaussian process models.
+
+        Args:
+            model_0 (GaussianProcessModel): The first Gaussian process model.
+            model_1 (GaussianProcessModel): The second Gaussian process model.
+
+        Returns:
+            A tuple containing four covariance matrices:
+            - k_uf: Covariance matrix between inducing points and input data for model_0.
+            - k_uu: Covariance matrix between inducing points for model_0.
+            - h_uf: Covariance matrix between inducing points and input data for model_1.
+            - h_uu: Covariance matrix between inducing points for model_1.
+        """
         cov_kuf = gpflow.covariances.kufs.Kuf_kernel_inducingpoints
         cov_kuu = gpflow.covariances.kuus.Kuu_kernel_inducingpoints
 
@@ -41,12 +55,15 @@ class StatisticalTest(object):
 
         return k_uf, k_uu, h_uf, h_uu
 
-    def _compute_cov_alt(self, model_0, model_1) -> tf.Tensor:
-        """
-        Compute the covariance matrix under the alternative hypothesis;
-        :param model_0: the model trained on the window;
-        :param model_1: the model trained on the overlap;
-        :return: the covariance matrix under the alternative hypothesis.
+    def compute_alternative_cov(self, model_0, model_1) -> tf.Tensor:
+        """Computes the covariance matrix under the alternative hypothesis.
+
+        Args:
+            model_0 (object): The model trained on the window.
+            model_1 (object): The model trained on the overlap.
+
+        Returns:
+            The covariance matrix under the alternative hypothesis.
         """
         k_uf, k_uu, h_uf, h_uu = self.compute_covariance(model_0, model_1)
 
@@ -83,11 +100,15 @@ class StatisticalTest(object):
 
         return result
 
-    def _compute_single_expert_inv_covariance(self, model) -> tf.Tensor:
-        """
-        Computes the inverse covariance matrix for a given GP model.
-        :param model: the model whose inverse covariance matrix is to be computed;
-        :return: the inverse covariance matrix.
+    def _compute_single_expert_inv_covariance(self, model: gpflow.models.GPModel) -> tf.Tensor:
+        """Computes the inverse covariance matrix for a given GP model.
+
+        Args:
+            model:
+                The GP model whose inverse covariance matrix is to be computed.
+
+        Returns:
+            The inverse covariance matrix.
         """
         k_uf = gpflow.covariances.kufs.Kuf_kernel_inducingpoints(
             model.inducing_variable, model.kernel, model.data[0]
@@ -134,7 +155,7 @@ class StatisticalTest(object):
 
         return tf.add(identity, matrix)
 
-    def _compute_ratio(self, inverse_cov_new_exp, vector) -> tf.Tensor:
+    def compute_ratio(self, inverse_cov_new_exp, vector) -> tf.Tensor:
         """
         Computes the test statistic.
         :param inverse_cov_new_exp: the inverse covariance matrix of the expert trained on the overlap;
@@ -146,19 +167,27 @@ class StatisticalTest(object):
         )
         return likelihood
 
-    def _compute_thresholds(
+    def compute_thresholds(
         self, cov_null, cov_alt, cov_new_exp, inverse_cov_new_exp, alt=False
-    ):
+    ) -> float:
         """
         Computes the threshold for controlling type I and type II errors.
-        :param cov_null: the covariance matrix under the null hypothesis;
-        :param cov_alt: the covariance matrix under the alternative hypothesis;
-        :param cov_new_exp: the covariance matrix of the expert trained on the overlap;
-        :param inverse_cov_new_exp: the inverse covariance matrix of the model trained on the overlap.
-        :param alt: wheteher the threshold is for type II errors, or not;
-        :return: the threshold value.
+
+        Args:
+            cov_null:
+                The covariance matrix under the null hypothesis.
+            cov_alt:
+                The covariance matrix under the alternative hypothesis.
+            cov_new_exp:
+                The covariance matrix of the expert trained on the overlap.
+            inverse_cov_new_exp:
+                The inverse covariance matrix of the model trained on the overlap.
+            alt
+                Whether the threshold is for type II errors. Defaults to False.
+
+        Returns:
+            The threshold value.
         """
-        n = tf.shape(cov_new_exp)[0]
 
         if alt:
             matrix = tf.linalg.matmul(cov_alt, inverse_cov_new_exp)
@@ -176,7 +205,7 @@ class StatisticalTest(object):
 
         while True:
             try:
-                if tolerance == None:
+                if tolerance is None:
                     approx_infty_norm = scipy.sparse.linalg.eigs(
                         matrix.numpy(), k=1, which="LM", return_eigenvectors=False
                     )
@@ -192,7 +221,7 @@ class StatisticalTest(object):
                 break
             except ValueError as e:
                 print(e)
-                if tolerance == None:
+                if tolerance is None:
                     tolerance = 1e-15
                 else:
                     tolerance *= 10
@@ -231,32 +260,29 @@ class StatisticalTest(object):
 
         new_cov = self._compute_single_expert_covariance(self.model_new_expert)
         inv_new_cov = self._compute_single_expert_inv_covariance(self.model_new_expert)
-        product_covariance_matrix_alt = self._compute_cov_alt(
+        product_covariance_matrix_alt = self.compute_alternative_cov(
             self.model_current_expert, self.model_new_expert
         )
 
-        threshold_null = self._compute_thresholds(
+        threshold_null = self.compute_thresholds(
             product_covariance_matrix_null,
             product_covariance_matrix_alt,
             new_cov,
             inv_new_cov,
         )
-        threshold_alt = self._compute_thresholds(
+        threshold_alt = self.compute_thresholds(
             product_covariance_matrix_null,
             product_covariance_matrix_alt,
             new_cov,
             inv_new_cov,
             alt=True,
         )
-        ratio = self._compute_ratio(inv_new_cov, self.model_new_expert.data[1])
+        ratio = self.compute_ratio(inv_new_cov, self.model_new_expert.data[1])
 
         print("Threshold for type I errors:", threshold_null.numpy())
         print("Threshold for type II errors:", threshold_alt.numpy())
         print("Ratio:", ratio.numpy())
 
-        if threshold_alt >= threshold_null and ratio >= threshold_null:
-            result = True
-        else:
-            result = False
-        # print("Result of the test:", result)
+        result = threshold_alt >= threshold_null and ratio >= threshold_null
+
         return result

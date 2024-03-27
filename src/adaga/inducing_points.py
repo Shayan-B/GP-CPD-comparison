@@ -18,14 +18,14 @@ class AdaptiveRegionalization(object):
 
     def __init__(
         self,
-        domain_data,
-        system_data,
-        delta,
-        min_w_size,
-        n_ind_pts,
-        seed,
-        batch_size,
-        kern="RBF",
+        domain_data: np.ndarray,
+        system_data: np.ndarray,
+        delta: float,
+        min_w_size: int,
+        n_ind_pts: int,
+        seed: int,
+        batch_size: int,
+        kern: str = "Matern12",
         domain_test=None,
         system_test=None,
         input_horizon=None,
@@ -57,19 +57,33 @@ class AdaptiveRegionalization(object):
         # (w.r.t. the final value of the trajectory).
         self.input_horizon = input_horizon
         if self.input_horizon is not None:
-            self._slice_domain_function()
+            self.slice_domain()
 
-    def make_logistic_boundary(self, low_bound, high_bound):
+    def make_logistic_boundary(
+        self, low_bound: float, high_bound: float
+    ) -> tfp.Bijectors:
+        """Make the boundaries for the transforms of kernels.
+
+        Args:
+            low_bound:
+                The lower boundary of the scale.
+            high_bound:
+                The higher boundary of the scale.
+        Returns:
+            The object declaring the lower and higher boundaries.
+        """
         low_bound = tf.cast(low_bound, dtype=tf.float64)
         high_bound = tf.cast(high_bound, dtype=tf.float64)
         affine = tfp.bijectors.Shift(low_bound)(
             tfp.bijectors.Scale(high_bound - low_bound)
-        )  # Chain Shift and Scale
+        )
         sigmoid = tfp.bijectors.Sigmoid()
+
+        # Chain Shift and Scale
         logistic = tfp.bijectors.Chain([affine, sigmoid])
         return logistic
 
-    def _slice_domain_function(self):
+    def slice_domain(self):
         sliced_x_y = np.array(
             [e for e in np.column_stack((self.x, self.y)) if e[0] <= self.input_horizon]
         )
@@ -130,8 +144,15 @@ class AdaptiveRegionalization(object):
         return k
 
     def make_observation_params(
-        self, window, new: bool, x_mean=None, x_std=None, y_mean=None, y_std=None
-    ):
+        self,
+        window: np.ndarray,
+        new: bool,
+        x_mean=None,
+        x_std=None,
+        y_mean=None,
+        y_std=None,
+    ) -> tuple[np.ndarray, np.ndarray, float, float, float, float]:
+        """Standardize the observations for model input."""
         # Define x and y
         x = np.expand_dims(window[:, 0], axis=-1)
         y = np.expand_dims(window[:, 1], axis=-1)
@@ -147,65 +168,54 @@ class AdaptiveRegionalization(object):
         return x, y, x_mean, x_std, y_mean, y_std
 
     def creat_expert(
-        self, window, new: bool, x_mean=None, x_std=None, y_mean=None, y_std=None
-    ):
+        self,
+        window: np.ndarray,
+        new: bool,
+        x_mean: float = None,
+        x_std: float = None,
+        y_mean: float = None,
+        y_std: float = None,
+    ) -> tuple[gpflow.models, float, float, float, float]:
         """
-        This method creates the expert on the region of interest (full window or overlap);
-        :param window: the slice of data that supports the expert;
-        :param new: whether the expert is trained on the overlap or not;
-        :param x_mean: the mean to use in time standardization;
-        :param x_std: the std dev to use in time standardization;
-        :param y_mean: the mean to use in observations' standardization;
-        :param y_std: the std dev to use in observations' standardization;
-        :return: the expert, together with the (potentially recomputed) time and observations' mean, atd dev.
+            This method creates an expert on the region of interest.
+
+        Args:
+            window (slice): The slice of data that supports the expert.
+            new (bool): Whether the expert is trained on the overlap or not.
+            x_mean (float): The mean to use in time standardization.
+            x_std (float): The std dev to use in time standardization.
+            y_mean (float): The mean to use in observations' standardization.
+            y_std (float): The std dev to use in observations' standardization.
+
+        Returns:
+            tuple: A tuple containing the expert, together with the (potentially recomputed) time
+                and observations' mean and standard deviation.
         """
+        # make x and y arrays and standardize them.
         x, y, x_mean, x_std, y_mean, y_std = self.make_observation_params(
             window, new, x_mean, x_std, y_mean, y_std
         )
 
-        # Choose sum inducing points
+        # Choose some inducing points
         z_init = np.random.choice(
             x[:, 0], min(self.num_inducing_points, x.shape[0]), replace=False
         )
         z_init = np.expand_dims(z_init, axis=-1)
 
-        # Determine our kernel
+        # Determine our kernel instance
         kernel = self.select_kernel(new=new, use_kernel_sum=True)
 
-        # Define the Main model
+        # Define the Main model based on the provided kernel and data
         expert = gpflow.models.SGPR(
             data=(x, y), kernel=kernel, inducing_variable=z_init
         )
 
         return expert, x_mean, x_std, y_mean, y_std
 
-    def _build_likelihood(self, model: gpflow.models.SGPR):
-        """
-        This method builds the likelihood of the given model.
-        """
-
-        K_uf = gpflow.covariances.kufs.Kuf_kernel_inducingpoints(
-            model.inducing_variable, model.kernel, model.data[0]
-        )
-        K_uu = gpflow.covariances.kuus.Kuu_kernel_inducingpoints(
-            model.inducing_variable, model.kernel, jitter=gpflow.default_jitter()
-        )
-        K_uu_inv = np.linalg.inv(K_uu)
-        K = (
-            np.matmul(np.matmul(np.transpose(K_uf), K_uu_inv), K_uf)
-            + np.identity(model.data[0].shape[0], dtype=gpflow.default_float())
-            * model.likelihood.variance.numpy()
-        )
-        L = np.linalg.cholesky(K)
-        m = model.mean_function(model.data[0])
-        y_tensor = tf.constant(model.data[1])
-        logpdf = multivariate_normal(
-            y_tensor, m, L
-        )  # (R,) log-likelihoods for each independent dimension of Y
-
-        return np.sum(logpdf)
-
-    def compute_covariance(self, model_1=None, model_2=None):
+    def compute_covariance(
+        self, model_1: gpflow.models = None, model_2: gpflow.models = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Compute the covariances of the given models."""
         K_1, K_2 = None, None
         cov_kuf = gpflow.covariances.kufs.Kuf_kernel_inducingpoints
         cov_kuu = gpflow.covariances.kuus.Kuu_kernel_inducingpoints
@@ -238,67 +248,6 @@ class AdaptiveRegionalization(object):
 
         return K_1, K_2
 
-    def _build_norm_const(
-        self, model_1: gpflow.models.SGPR, model_2: gpflow.models.SGPR
-    ):
-        """
-        This method builds the normalization constant of the product of two Gaussian pdfs.
-        """
-        K_1, K_2 = self.compute_covariance(model_1=model_1, model_2=model_2)
-
-        L = np.linalg.cholesky(K_1 + K_2)
-        m_1 = model_1.mean_function(model_1.datat[0])
-        m_2 = model_2.mean_function(model_2.data[0])
-        logpdf = multivariate_normal(
-            m_1, m_2, L
-        )  # (R,) log-likelihoods for each independent dimension of Y
-
-        return np.sum(logpdf)
-
-    def _build_norm_const_new(self, model_1: gpflow.models.SGPR):
-        """
-        This method builds the normalization constant of a given model.
-        """
-        K_1 = self.compute_covariance(model_1=model_1, model_2=model_1)
-
-        _, c = np.linalg.slogdet(a=2 * np.pi * K_1)
-        return 0.5 * c
-
-    def test(self):
-        final_pred = np.empty((0, 1))
-        final_gt = np.empty((0, 1))
-        final_time = np.empty((0, 1))
-        for region in self.closed_windows:
-            window_test = np.array(
-                [
-                    e
-                    for e in np.column_stack((self.domain_test, self.y_test))
-                    if region["window_start"] <= e[0] < region["window_end"]
-                ]
-            )
-
-            model_test, x_mean_test, x_std_test, y_mean_test, y_std_test = (
-                self.creat_expert(window_test, False)
-            )
-            opt_test = gpflow.train.ScipyOptimizer()
-            opt_test.minimize(model_test)
-
-            x_pred_test = np.expand_dims(window_test[:, 0], axis=-1)
-            pred, _ = model_test.predict_f(x_pred_test)
-            pred = pred * y_std_test + y_mean_test
-            y_gt = np.expand_dims(window_test[:, 1], axis=-1) * y_std_test + y_mean_test
-
-            final_pred = np.concatenate((final_pred, pred), axis=0)
-            final_gt = np.concatenate((final_gt, y_gt), axis=0)
-            final_time = np.concatenate(
-                (final_time, x_pred_test * x_std_test + x_mean_test), axis=0
-            )
-
-        self.rmse = [
-            self.x.shape[0],
-            np.sqrt(np.sum((final_pred - final_gt) ** 2) / final_gt.shape[0]),
-        ]
-
     def optimize_model(self, model):
         """Optimize the given model for minimum loss."""
         expert_optimizer = gpflow.optimizers.Scipy()
@@ -329,13 +278,18 @@ class AdaptiveRegionalization(object):
 
             # Define windows in tuples of (x,y)
             window = np.array(
-                [e for e in np.column_stack((self.x, self.y)) if start <= e[0] < end]
+                [
+                    win
+                    for win in np.column_stack((self.x, self.y))
+                    if start <= win[0] < end
+                ]
             )
             print("start, end:", start, end)
 
             if window.shape[0] <= 1:
                 break
-
+            
+            # Define the comparison window starting point
             best_start_new_exp = end - self.min_window_size
 
             # Choose the tuples for the expert training
